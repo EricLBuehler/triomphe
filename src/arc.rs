@@ -143,6 +143,23 @@ impl<T> Arc<T> {
     pub fn try_unwrap(this: Self) -> Result<T, Self> {
         Self::try_unique(this).map(UniqueArc::into_inner)
     }
+
+    /// Attempts to convert an `Arc` into a `Box`. This will fail if the `Arc` is not unique.
+    pub fn to_box(mut this: Self) -> Option<Box<T>> {
+        if this.is_unique() {
+            let ArcInner { count: _, data } = unsafe { core::ptr::read(this.p.as_ptr()) }; //Unsafety is OK as we have the only ref now
+
+            this.inner().count.load(Acquire);
+
+            unsafe { this.drop_slow() };
+
+            std::mem::forget(this);
+
+            Some(Box::new(data))
+        } else {
+            None
+        }
+    }
 }
 
 impl<T> Arc<[T]> {
