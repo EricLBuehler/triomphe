@@ -147,7 +147,7 @@ impl<T> Arc<T> {
     /// Attempts to convert an `Arc` into a `Box`. This will fail if the `Arc` is not unique.
     pub fn to_box(mut this: Self) -> Option<Box<T>> {
         if this.is_unique() {
-            let ArcInner { count: _, data } = unsafe { core::ptr::read(this.p.as_ptr()) }; //Unsafety is OK as we have the only ref now
+            let ArcInner { data, .. } = unsafe { core::ptr::read(this.p.as_ptr()) }; //Unsafety is OK as we have the only ref now
 
             this.inner().count.load(Acquire);
 
