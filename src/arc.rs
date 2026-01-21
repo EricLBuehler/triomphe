@@ -15,7 +15,7 @@ use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr::{self, NonNull};
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
-
+use std::ptr::addr_of_mut;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
@@ -392,7 +392,7 @@ impl<T: ?Sized> Arc<T> {
                 // mem_to_arcinner keeps the same pointer (caller safety condition)
                 let inner_ptr = mem_to_arcinner(ptr);
                 // Initialize the reference count
-                ptr::write(&raw mut (*inner_ptr).count, atomic::AtomicUsize::new(1));
+                ptr::write(addr_of_mut!((*inner_ptr).count), atomic::AtomicUsize::new(1));
                 // Pointer stays non-null
                 NonNull::new_unchecked(inner_ptr)
             }

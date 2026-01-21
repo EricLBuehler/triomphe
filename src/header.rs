@@ -44,8 +44,8 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             //
             // Note that any panics here (i.e. from the iterator) are safe, since
             // we'll just leak the uninitialized memory.
-            ptr::write(&raw mut (*inner.as_ptr()).data.header, header);
-            let mut current = &raw mut (*inner.as_ptr()).data.slice as *mut T;
+            ptr::write(addr_of_mut!((*inner.as_ptr()).data.header), header);
+            let mut current = addr_of_mut!((*inner.as_ptr()).data.slice) as *mut T;
             for _ in 0..num_items {
                 // ZST writes are a no-op, but we still check iterator length
                 ptr::write(
@@ -83,12 +83,12 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
         unsafe {
             // Safety
             // Header is valid (just allocated)
-            ptr::write(&raw mut (*inner.as_ptr()).data.header, header);
+            ptr::write(addr_of_mut!((*inner.as_ptr()).data.header), header);
 
             // dst points to `num_items` of uninitialized T's
             // T: Copy makes bytewise copying safe
-            let dst = &raw mut (*inner.as_ptr()).data.slice as *mut T;
-            ptr::copy_nonoverlapping(items.as_ptr(), dst, num_items);
+            let dst: *mut [T] = addr_of_mut!((*inner.as_ptr()).data.slice);
+            ptr::copy_nonoverlapping(items.as_ptr(), dst as *mut T, num_items);
         }
 
         // Safety: ptr is valid & the inner structure is fully initialized
