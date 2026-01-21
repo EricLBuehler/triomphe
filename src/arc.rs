@@ -384,7 +384,7 @@ impl<T: ?Sized> Arc<T> {
                 .pad_to_align();
 
             // ArcInner never has a zero size
-            let ptr =  alloc::alloc::alloc(full_layout);
+            let ptr = alloc::alloc::alloc(full_layout);
             if ptr.is_null() {
                 handle_alloc_error(full_layout)
             } else {

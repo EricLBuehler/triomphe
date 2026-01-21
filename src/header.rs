@@ -27,7 +27,7 @@ pub struct HeaderSlice<H, T: ?Sized> {
 impl<H, T> Arc<HeaderSlice<H, [T]>> {
     /// Creates an Arc for a HeaderSlice using the given header struct and
     /// iterator to generate the slice. The resulting Arc will be fat.
-    /// 
+    ///
     /// **Panics** if the iterator yields a different number of elements than
     /// reported, or if the iterator itself panicked. In either case, the
     /// memory is leaked.
