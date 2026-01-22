@@ -12,10 +12,9 @@ use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
 use core::panic::{RefUnwindSafe, UnwindSafe};
-use core::ptr::{self, NonNull};
+use core::ptr::{addr_of_mut, self, NonNull};
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
-use std::ptr::addr_of_mut;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
