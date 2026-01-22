@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
-use core::mem::{self, ManuallyDrop};
+use core::mem::ManuallyDrop;
 use core::ptr::{self, addr_of_mut};
 
 use crate::OffsetArc;
@@ -27,12 +27,14 @@ pub struct HeaderSlice<H, T: ?Sized> {
 impl<H, T> Arc<HeaderSlice<H, [T]>> {
     /// Creates an Arc for a HeaderSlice using the given header struct and
     /// iterator to generate the slice. The resulting Arc will be fat.
+    ///
+    /// **Panics** if the iterator yields a different number of elements than
+    /// reported, or if the iterator itself panicked. In either case, the
+    /// memory is leaked.
     pub fn from_header_and_iter<I>(header: H, mut items: I) -> Self
     where
         I: Iterator<Item = T> + ExactSizeIterator,
     {
-        assert_ne!(mem::size_of::<T>(), 0, "Need to think about ZST");
-
         let num_items = items.len();
 
         let inner = Arc::allocate_for_header_and_slice(num_items);
@@ -42,16 +44,17 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             //
             // Note that any panics here (i.e. from the iterator) are safe, since
             // we'll just leak the uninitialized memory.
-            ptr::write(&mut ((*inner.as_ptr()).data.header), header);
-            let mut current = (*inner.as_ptr()).data.slice.as_mut_ptr();
+            ptr::write(addr_of_mut!((*inner.as_ptr()).data.header), header);
+            let mut current = addr_of_mut!((*inner.as_ptr()).data.slice) as *mut T;
             for _ in 0..num_items {
+                // ZST writes are a no-op, but we still check iterator length
                 ptr::write(
                     current,
                     items
                         .next()
                         .expect("ExactSizeIterator over-reported length"),
                 );
-                current = current.offset(1);
+                current = current.add(1);
             }
             assert!(
                 items.next().is_none(),
@@ -67,22 +70,25 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
     }
 
     /// Creates an Arc for a HeaderSlice using the given header struct and
-    /// iterator to generate the slice. The resulting Arc will be fat.
+    /// slice of copyable items. The items will be copied into the resulting
+    /// Arc, which will be fat.
     pub fn from_header_and_slice(header: H, items: &[T]) -> Self
     where
         T: Copy,
     {
-        assert_ne!(mem::size_of::<T>(), 0, "Need to think about ZST");
-
         let num_items = items.len();
 
         let inner = Arc::allocate_for_header_and_slice(num_items);
 
         unsafe {
-            // Write the data.
-            ptr::write(&mut ((*inner.as_ptr()).data.header), header);
-            let dst = (*inner.as_ptr()).data.slice.as_mut_ptr();
-            ptr::copy_nonoverlapping(items.as_ptr(), dst, num_items);
+            // Safety
+            // Header is valid (just allocated)
+            ptr::write(addr_of_mut!((*inner.as_ptr()).data.header), header);
+
+            // dst points to `num_items` of uninitialized T's
+            // T: Copy makes bytewise copying safe
+            let dst: *mut [T] = addr_of_mut!((*inner.as_ptr()).data.slice);
+            ptr::copy_nonoverlapping(items.as_ptr(), dst as *mut T, num_items);
         }
 
         // Safety: ptr is valid & the inner structure is fully initialized

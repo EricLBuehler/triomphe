@@ -12,10 +12,9 @@ use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
 use core::panic::{RefUnwindSafe, UnwindSafe};
-use core::ptr::{self, NonNull};
+use core::ptr::{addr_of_mut, self, NonNull};
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
@@ -356,6 +355,10 @@ impl<T: ?Sized> Arc<T> {
     /// The function `mem_to_arcinner` is called with the data pointer
     /// and must return back a (potentially fat)-pointer for the `ArcInner<T>`.
     ///
+    /// This function initializes the reference count, but the caller is
+    /// responsible for initializing `inner_ptr.data` after `inner_ptr` is
+    /// returned from this function.
+    ///
     /// ## Safety
     ///
     /// `mem_to_arcinner` must return the same pointer, the only things that can change are
@@ -363,72 +366,54 @@ impl<T: ?Sized> Arc<T> {
     /// - its metadata
     ///
     /// `value_layout` must be correct for `T`.
-    #[allow(unused_unsafe)]
     pub(super) unsafe fn allocate_for_layout(
         value_layout: Layout,
         mem_to_arcinner: impl FnOnce(*mut u8) -> *mut ArcInner<T>,
     ) -> NonNull<ArcInner<T>> {
-        let layout = Layout::new::<ArcInner<()>>()
-            .extend(value_layout)
-            .unwrap()
-            .0
-            .pad_to_align();
-
-        // Safety: we propagate safety requirements to the caller
         unsafe {
-            Arc::try_allocate_for_layout(value_layout, mem_to_arcinner)
-                .unwrap_or_else(|_| handle_alloc_error(layout))
+            // Safety
+
+            // 1. Caller ensures that value_layout is the layout of T
+            // 2. ArcInner is repr(C)
+            // 3. Thus, full_layout is layout of ArcInner<T>
+            let full_layout = Layout::new::<ArcInner<()>>()
+                .extend(value_layout)
+                .expect("layout too big")
+                .0
+                .pad_to_align();
+
+            // ArcInner never has a zero size
+            let ptr = alloc::alloc::alloc(full_layout);
+            if ptr.is_null() {
+                handle_alloc_error(full_layout)
+            } else {
+                // Form the ArcInner pointer by adding type/metadata
+                // mem_to_arcinner keeps the same pointer (caller safety condition)
+                let inner_ptr = mem_to_arcinner(ptr);
+                // Initialize the reference count
+                ptr::write(addr_of_mut!((*inner_ptr).count), atomic::AtomicUsize::new(1));
+                // Pointer stays non-null
+                NonNull::new_unchecked(inner_ptr)
+            }
         }
-    }
-
-    /// Allocates an `ArcInner<T>` with sufficient space for
-    /// a possibly-unsized inner value where the value has the layout provided,
-    /// returning an error if allocation fails.
-    ///
-    /// The function `mem_to_arcinner` is called with the data pointer
-    /// and must return back a (potentially fat)-pointer for the `ArcInner<T>`.
-    ///
-    /// ## Safety
-    ///
-    /// `mem_to_arcinner` must return the same pointer, the only things that can change are
-    /// - its type
-    /// - its metadata
-    ///
-    /// `value_layout` must be correct for `T`.
-    #[allow(unused_unsafe)]
-    unsafe fn try_allocate_for_layout(
-        value_layout: Layout,
-        mem_to_arcinner: impl FnOnce(*mut u8) -> *mut ArcInner<T>,
-    ) -> Result<NonNull<ArcInner<T>>, ()> {
-        let layout = Layout::new::<ArcInner<()>>()
-            .extend(value_layout)
-            .unwrap()
-            .0
-            .pad_to_align();
-
-        let ptr = NonNull::new(alloc::alloc::alloc(layout)).ok_or(())?;
-
-        // Initialize the ArcInner
-        let inner = mem_to_arcinner(ptr.as_ptr());
-        debug_assert_eq!(unsafe { Layout::for_value(&*inner) }, layout);
-
-        unsafe {
-            ptr::write(&mut (*inner).count, atomic::AtomicUsize::new(1));
-        }
-
-        // Safety: `ptr` is checked to be non-null,
-        //         `inner` is the same as `ptr` (per the safety requirements of this function)
-        unsafe { Ok(NonNull::new_unchecked(inner)) }
     }
 }
 
 impl<H, T> Arc<HeaderSlice<H, [T]>> {
+    /// Allocates the arc inner for a slice DST type.
+    ///
+    /// The `len` argument provides the length of the tail. This function initializes the
+    /// reference count, but the caller is responsible for initializing the data inside
+    /// `inner_ptr.data` where `inner_ptr` is the pointer returned by this function.
     pub(super) fn allocate_for_header_and_slice(
         len: usize,
     ) -> NonNull<ArcInner<HeaderSlice<H, [T]>>> {
-        let layout = Layout::new::<H>()
-            .extend(Layout::array::<T>(len).unwrap())
-            .unwrap()
+        let layout = Layout::array::<T>(len)
+            .and_then(|tail_layout| {
+                let header_layout = Layout::new::<H>();
+                header_layout.extend(tail_layout)
+            })
+            .expect("Requested size too big")
             .0
             .pad_to_align();
 
